@@ -1,0 +1,286 @@
+---
+title: "Rental Listings Demo"
+author: "Jens von Bergmann"
+date: "`r Sys.Date()`"
+output:
+  html_document: default
+  html_notebook: default
+vignette: >
+  %\VignetteIndexEntry{Rental Listings Demo}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, message=FALSE, warning=FALSE}
+library(rental)
+library(cancensus)
+```
+
+
+## Listings Overview
+As an example we read the August data for unfurnished listings for Vancouver, Calgary and Toronto.
+```{r}
+
+region_names=c("Vancouver","Calgary","Toronto")
+
+regions=list_census_regions('CA16') %>% filter(level=="CSD",name %in% region_names)
+
+geo=get_census(dataset = 'CA16',regions=as_census_region_list(regions),geo_format='sf',level="Regions")
+
+for (i in 1:nrow(geo)) {
+  row=geo[i,]
+  ls <- get_listings("2017-08-01","2017-09-01",row$geometry,filter = 'unfurnished')
+  summary=ls %>% as.data.frame %>% select("price","beds") %>% group_by(beds) %>% summarize(median=paste0("$",format(median(price),big.mark=","))) %>% mutate(name=row$name)
+  print(row$name)
+  print(summary)
+  #print(paste0(row$name," median price: $",format(median(ls$price),big.mark=",")))
+}
+```
+
+## Map
+
+```{r, include=FALSE}
+bg_color="#c0c0c0"
+theme_opts<-list(theme(panel.grid.minor = element_blank(),
+                       #panel.grid.major = element_blank(), #bug, not working
+                       panel.grid.major = element_line(colour = bg_color),
+                       panel.background = element_rect(fill = bg_color, colour = NA),
+                       plot.background = element_rect(fill=bg_color, size=1,linetype="solid"),
+                       axis.line = element_blank(),
+                       axis.text.x = element_blank(),
+                       axis.text.y = element_blank(),
+                       axis.ticks = element_blank(),
+                       axis.title.x = element_blank(),
+                       axis.title.y = element_blank()))
+```
+
+
+
+
+```{r price_map, fig.height=10, fig.width=10, message=FALSE, warning=FALSE}
+library(sf)
+library(ggplot2)
+
+geo=get_census(dataset = 'CA16',regions=list(CMA="59933"),geo_format='sf',level="Regions")
+
+ls <- get_listings("2017-08-01","2017-09-01",geo$geometry,beds=c(1),filter = 'unfurnished')
+  summary=ls %>% as.data.frame %>% select("price","beds") %>% group_by(beds) %>% summarize(median=paste0("$",format(median(price),big.mark=","))) %>% mutate(name=row$name)
+
+cts=get_census(dataset = 'CA16',regions=list(CMA="59933"),geo_format='sf',level="CSD")
+
+min_listings=10
+
+median_rent <- function(v){
+  result <- ifelse(length(v)>min_listings, median(v),NA)
+  return(result)
+}
+
+aggregate_listings <- aggregate(cts %>% select("GeoUID"),ls,function(x){x})
+
+data <- aggregate(ls %>% select("price"),cts,median_rent)
+
+
+cutoffs=as.integer(quantile(data$price, probs=seq(0,1,0.1), na.rm=TRUE))
+labels=factor(as.character(seq(1,length(cutoffs)-1) %>% lapply(function(i){return(paste0(cutoffs[i]," - ",cutoffs[i+1]))})),order=TRUE)
+colors=setNames(RColorBrewer::brewer.pal(length(labels),"RdYlBu"),labels)
+data$discrete_price= data$price %>% cut(breaks=cutoffs, labels=labels)
+
+
+ggplot() +
+  geom_sf(data=cts, fill="#808080", size=0.1) +
+  geom_sf(data=data, aes(fill = discrete_price), size=0.1) +
+  scale_fill_brewer(palette='RdYlBu', direction=-1, na.value="#808080",name="Median Price") +
+  labs(title="August Studio and 1 Bedroom Unfurnished Median Ask") +
+  theme_opts
+```
+
+
+
+## Rent distributions by municipality
+
+```{r, message=FALSE, warning=FALSE}
+library(ggbeeswarm)
+library(gridExtra)
+
+regions=as_census_region_list(search_census_regions("Vancouver",'CA16','CMA'))
+
+geo=get_census(dataset = 'CA16',regions=regions,geo_format='sf',level="Regions")
+
+ls <- get_listings("2017-08-01","2017-09-01",geo$geometry,beds=c(1),filter = 'unfurnished',sanity=c(400,4000))
+  summary=ls %>% as.data.frame %>% select("price","beds") %>% group_by(beds) %>% summarize(median=paste0("$",format(median(price),big.mark=","))) %>% mutate(name=row$name)
+
+  
+geos=get_census(dataset = 'CA16',regions=regions,geo_format='sf',level="CSD") %>%
+  st_join(ls) 
+
+top_munis <- geos %>% group_by(name) %>% summarize(count=length(name)) %>% 
+  top_n(5,count) %>% pull("name")
+
+plot_data <- geos %>% filter(name %in% top_munis) %>%
+  rename(Municipality=name)
+title="Distribution of Unfurnished 1br Rents, August 2017"
+p1 <- ggplot(plot_data) + 
+  geom_density(aes(x=price, color=Municipality)) +
+  labs(title=title)
+p2 <- ggplot(plot_data, aes(Municipality, price))+ 
+  geom_violin(aes(fill=Municipality )) + 
+  #geom_beeswarm(pch = 1, col='white', cex=0.8, alpha=0.6) +
+  labs(title=title)
+grid.arrange(p1, p2, ncol=1)
+```
+
+
+
+## Looking into Coquitlam
+```{r, message=FALSE, warning=FALSE}
+region_name="Coquitlam" #"Richmond"
+regions=as_census_region_list(search_census_regions(region_name,'CA16','CSD') %>% filter(name==region_name))
+
+geo=get_census(dataset = 'CA16',regions=regions,geo_format='sf',level="Regions")
+
+ls <- get_listings("2017-08-01","2017-09-01",geo$geometry,beds=c(1),filter = 'unfurnished',sanity=c(400,4000))
+summary=ls %>% as.data.frame %>% 
+  select("price","beds") %>% 
+  group_by(beds) %>%
+  summarize(median=paste0("$",format(median(price),big.mark=","))) %>% 
+  mutate(name=row$name)
+
+cutoffs=c(400,1350,4000)
+labels=factor(as.character(seq(1,length(cutoffs)-1) %>% lapply(function(i){return(paste0(cutoffs[i]," - ",cutoffs[i+1]))})),order=TRUE)
+colors=setNames(c("turquoise","purple"),labels)
+ls$discrete_price= ls$price %>% cut(breaks=cutoffs, labels=labels)
+
+#ls <- cbind(ls,st_coordinates(st_transform(ls,102002)$location))
+ls <- cbind(ls,st_coordinates(ls$location))
+
+library(ggmap)
+
+```
+
+```{r, message=FALSE, warning=FALSE}
+base <- get_map(paste0(region_name,", Canada"), zoom=12, source = "stamen", maptype = "toner", 
+    crop = T)
+
+#ggplot() +
+  ggmap(base) +
+  #geom_sf(data=geo, fill="#808080", size=0.1) +
+  #coord_sf(crs=st_crs(102002)) +
+  geom_point(data=ls , aes(color = discrete_price, x=X, y=Y), shape=21, size=2) +
+  scale_fill_manual(palette=colors) +
+  labs(title="August Studio and 1 Bedroom Unfurnished Median Ask",color="Price") +
+  theme_opts
+```
+
+## Rent distributions over time
+
+```{r, fig.height=7, fig.width=7, message=FALSE, warning=FALSE}
+
+region_name="Vancouver" 
+regions=as_census_region_list(search_census_regions(region_name,'CA16','CSD') %>% filter(name==region_name))
+
+geo=get_census(dataset = 'CA16',regions=regions,geo_format='sf',level="Regions")
+
+ls <- get_listings("2017-05-01","2017-09-01",geo$geometry,beds=c(1),filter = 'unfurnished',sanity=c(400,4000))
+
+ls$year_month <- factor(substr(ls$post_date,0,7),ordered = TRUE)
+#ls$year_month_day <- factor(substr(ls$post_date,0,10),ordered = TRUE)
+ 
+#ls %>% group_by(year_month) %>% summarize(count=length(year_month)) %>% as.data.frame %>% select("year_month","count")
+#ls %>% group_by(year_month_day) %>% summarize(count=length(year_month_day)) %>% as.data.frame %>% select("year_month_day","count")
+  
+ 
+plot_data <- ls %>% as.data.frame %>% select("price","year_month")
+title="Distribution of Unfurnished 1br Rents, City of Vancouver"
+p1 <- ggplot(plot_data) + 
+  geom_density(aes(x=price, color=year_month)) +
+  labs(title=title, color="Year-Month")
+p2 <- ggplot(plot_data, aes(year_month, price))+ 
+  geom_violin(aes(fill=year_month )) + 
+  #geom_beeswarm(pch = 1, col='white', cex=0.8, alpha=0.6) +
+  labs(title=title, fill="Year-Month", x="Year-Month")
+grid.arrange(p1, p2, ncol=1)
+```
+
+
+
+## Rent distributions by municipality
+
+```{r, fig.height=7, fig.width=7, message=FALSE, warning=FALSE}
+library(ggbeeswarm)
+library(gridExtra)
+
+region_names=c("Vancouver","Toronto","Victoria","Calgary")
+regions= as_census_region_list(do.call(rbind,lapply(region_names,function(region_name){return((search_census_regions(region_name,'CA16','CSD') %>% filter(name==region_name)))})))
+
+geo=get_census(dataset = 'CA16',regions=regions,geo_format='sf',level="Regions")
+
+geometry=st_union(geo$geometry)
+
+beds=2
+ls <- get_listings("2017-08-01","2017-09-01",geometry,beds=c(beds),filter = 'unfurnished',sanity=c(400,5000))
+  summary=ls %>% as.data.frame %>% select("price","beds") %>% group_by(beds) %>% summarize(median=paste0("$",format(median(price),big.mark=","))) %>% mutate(name=row$name)
+
+  
+geos=get_census(dataset = 'CA16',regions=regions,geo_format='sf',level="CSD") %>%
+  st_join(ls) 
+
+
+plot_data <- geos %>% as.data.frame %>% select("name","price") %>%
+  rename(Municipality=name)
+title=paste0("Distribution of Unfurnished ",beds,"br Rents, August 2017")
+p1 <- ggplot(plot_data) + 
+  geom_density(aes(x=price, color=Municipality)) +
+  labs(title=title)
+p2 <- ggplot(plot_data, aes(Municipality, price))+ 
+  geom_violin(aes(fill=Municipality )) + 
+  #geom_beeswarm(pch = 1, col='white', cex=0.8, alpha=0.6) +
+  labs(title=title)
+grid.arrange(p1, p2, ncol=1)
+```
+
+
+## Checking Specific area
+
+
+```{r}
+geo=sf::read_sf("../data/custom_region.geojson")
+
+ls <- get_listings("2017-06-01","2017-09-01",geo$geometry,beds=c(1),filter = 'unfurnished')
+  summary=ls %>% as.data.frame %>% select("price","beds") %>% group_by(beds) %>% summarize(median=paste0("$",format(median(price),big.mark=","))) %>% mutate(name=row$name)
+
+  ggplot(ls, aes(1, price))+ 
+  geom_violin(aes(fill=1 )) + 
+  #geom_beeswarm(pch = 1, col='white', cex=0.8, alpha=0.6) +
+  labs(title="June-August 1br unfurnished Custom Region")
+  
+```
+
+```{r, fig.height=5, fig.width=5}
+
+
+cutoffs=c(400,1050,4000)
+labels=factor(as.character(seq(1,length(cutoffs)-1) %>% lapply(function(i){return(paste0(cutoffs[i]," - ",cutoffs[i+1]))})),order=TRUE)
+colors=setNames(c("turquoise","purple"),labels)
+ls$discrete_price= ls$price %>% cut(breaks=cutoffs, labels=labels)
+ls <- cbind(ls,st_coordinates(ls$location))
+
+base <- get_map(location=c(-122.84594535827637, 49.18422801616818), zoom=15, source = "stamen", maptype = "toner", 
+    crop = T)
+
+#ggplot() +
+  ggmap(base) +
+  #geom_sf(data=geo, fill="#808080", size=0.1) +
+  #coord_sf(crs=st_crs(102002)) +
+  geom_point(data=ls , aes(color = discrete_price, x=X, y=Y), shape=21, size=4) +
+  scale_fill_manual(palette=colors) +
+  labs(title="August 1 Bedroom Unfurnished Median Ask",color="Price") +
+  theme_opts
+
+```
+
+
+
+
+
+
+
