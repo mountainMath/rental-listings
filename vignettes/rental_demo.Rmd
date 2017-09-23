@@ -273,6 +273,7 @@ base <- get_map(location=c(-122.84594535827637, 49.18422801616818), zoom=15, sou
   #coord_sf(crs=st_crs(102002)) +
   geom_point(data=ls , aes(color = discrete_price, x=X, y=Y), shape=21, size=4) +
   scale_fill_manual(palette=colors) +
+  geom_polygon(data= fortify(as(geo,"Spatial")), aes(x=long, y=lat), fill=NA, size=0.5,color='blue') +
   labs(title="August 1 Bedroom Unfurnished Median Ask",color="Price") +
   theme_opts
 

@@ -1,4 +1,10 @@
-#' @export
+#' Access to a hypothetical rental listings database
+#'
+#'
+#' The function expect that the following option variables are set
+#' rental.dbname, rental.host, rental.user, rental.password
+#' in order to access the remote postgres database
+#' Set thesee using e.g. options(renta.dbname="xxxxx") in your .Rprofile
 #' @param start_date starting date for listings (inclusive)
 #' @param end_date ending date for listings (exclusive)
 #' @param region a geographic region
@@ -7,6 +13,9 @@
 #' @param sanity optional, sanity filter to exclude extremely low or high price listings
 #' @param filter optional, possible values are "all", "furnished" or "unfurnished".
 #' @param quiet optional, displays some debug info if true
+#'
+#' @export
+#' @examples get_listings(start_date="2017-08-01", end_date="2017-09-01", region=geometry, filter = 'unfurnished')
 get_listings <- function(start_date,end_date,region,beds=NA,size=NA,sanity=c(400,10000),filter='all',quiet=TRUE) {
   conn = RPostgreSQL::dbConnect(RPostgreSQL::PostgreSQL(), dbname = getOption("rental.dbname"), host=getOption("rental.host"), user=getOption("rental.user"), password=getOption("rental.password"))
   conditions <- c(
