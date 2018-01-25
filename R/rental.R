@@ -16,7 +16,7 @@
 #'
 #' @export
 #' @examples get_listings(start_date="2017-08-01", end_date="2017-09-01", region=geometry, filter = 'unfurnished')
-get_listings <- function(start_date,end_date,region,beds=NA,size=NA,sanity=c(400,10000),filter='all',quiet=TRUE) {
+get_listings <- function(start_date,end_date,region,beds=NA,size=NA,sanity=c(400,10000),filter='all',include_title=FALSE,quiet=TRUE) {
   conn = RPostgreSQL::dbConnect(RPostgreSQL::PostgreSQL(), dbname = getOption("rental.dbname"), host=getOption("rental.host"), user=getOption("rental.user"), password=getOption("rental.password"))
   conditions <- c(
     paste0("\"postDate\" >= '",start_date,"'"),
@@ -66,8 +66,13 @@ get_listings <- function(start_date,end_date,region,beds=NA,size=NA,sanity=c(400
     conditions
   )
   query_string=paste(conditions,collapse = " and ")
-  ls <- sf::st_read_db(conn, query = paste0("select \"postDate\" as post_date, location, price, beds, size from vancraig where ",
-                                        query_string,";"), geom_column = "location")
+  selects=c("\"postDate\" as post_date","location", "price", "beds", "size")
+  if (include_title) {
+    selects=c(selects,"title")
+  }
+  ls <- sf::st_read_db(conn, query = paste0("select ",paste(selects,collapse = ", ")," from vancraig where ",
+                                        query_string,";"), geom_column = "location") %>%
+    mutate(size=as.numeric(size))
   RPostgreSQL::dbDisconnect(conn)
 
   return(ls)

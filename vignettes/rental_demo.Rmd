@@ -11,31 +11,117 @@ vignette: >
   %\VignetteEncoding{UTF-8}
 ---
 
-```{r, message=FALSE, warning=FALSE}
+```{r setup, message=FALSE, warning=FALSE}
 library(rental)
 library(cancensus)
+library(tidyverse)
+library(sf)
 ```
 
 
 ## Listings Overview
 As an example we read the August data for unfurnished listings for Vancouver, Calgary and Toronto.
-```{r}
+```{r, echo=FALSE}
 
 region_names=c("Vancouver","Calgary","Toronto")
-
-regions=list_census_regions('CA16') %>% filter(level=="CSD",name %in% region_names)
-
+regions=list_census_regions('CA16', use_cache = TRUE) %>% filter(level=="CSD",name %in% region_names)
 geo=get_census(dataset = 'CA16',regions=as_census_region_list(regions),geo_format='sf',level="Regions")
+
+start_time="2017-11-01"
+end_time="2018-01-16"
 
 for (i in 1:nrow(geo)) {
   row=geo[i,]
-  ls <- get_listings("2017-08-01","2017-09-01",row$geometry,filter = 'unfurnished')
-  summary=ls %>% as.data.frame %>% select("price","beds") %>% group_by(beds) %>% summarize(median=paste0("$",format(median(price),big.mark=","))) %>% mutate(name=row$name)
+  ls <- get_listings(start_time,end_time,row$geometry,filter = 'unfurnished')
+  summary=ls %>% as.data.frame %>% select("price","beds","size") %>% group_by(beds) %>% summarize(median=paste0("$",format(median(price),big.mark=",")),median_ppsf=paste0("$",round(median(price/size, na.rm=TRUE),2),"/sf"), count=n()) %>% mutate(name=row$name)
   print(row$name)
   print(summary)
   #print(paste0(row$name," median price: $",format(median(ls$price),big.mark=",")))
 }
+
+#ls %>% filter(beds=="1")
+
 ```
+
+
+## Vancouver over time
+```{r}
+regions=list_census_regions('CA16', use_cache = TRUE) %>% filter(level=="CSD",name == "Vancouver")
+geo=get_census(dataset = 'CA16',regions=as_census_region_list(regions),geo_format='sf',level="Regions")
+
+start_time="2017-05-01"
+end_time="2017-12-16"
+
+
+  ls <- get_listings(start_time,end_time,geo$geometry,filter = 'unfurnished')
+  summary=ls %>% as.data.frame %>% select("price","beds") %>% group_by(beds) %>% summarize(median=paste0("$",format(median(price),big.mark=",")), count=n()) %>% mutate(name="Vancouver")
+  
+```
+
+```{r}
+ls<-st_as_sf(ls)
+base=getOption("custom_data_path")
+nbhds=st_read(paste0(base,"local_area_boundary_shp/local_area_boundary.shp")) %>% st_transform(4326)
+downtown=st_read(paste0(base,"downtown_yvr.geojson"))
+yaletown=st_read(paste0(base,"yaletown.geojson"))
+westend=st_read(paste0(base,"westend.geojson"))
+ls$downtown=as.logical(st_intersects(ls,downtown))
+ls$westend=as.logical(st_intersects(ls,westend))
+ls$yaletown=as.logical(st_intersects(ls,yaletown))
+ls$nbhd_dtn=as.logical(st_intersects(ls,nbhds %>% filter(NAME=="Downtown")))
+ls <- ls %>% mutate(
+  nbhd_dtn=ifelse(is.na(nhd_dtn),FALSE,nhd_dtn),
+  downtown=ifelse(is.na(downtown),FALSE,downtown),
+  westend=ifelse(is.na(westend),FALSE,westend),
+  yaletown=ifelse(is.na(yaletown),FALSE,yaletown)
+  )
+
+
+ls <- st_join(ls,nbhds)
+
+
+ggplot(nbhds, aes(fill=NAME)) +geom_sf()
+
+
+```
+
+```{r}
+area="Renfrew-Collingwood"
+plot_data <- ls %>% filter(NAME==area,as.integer(beds)<3, price<5000) %>% mutate(beds=ifelse(as.integer(beds)>=5,"5+",beds))
+  ggplot(plot_data, aes(x=post_date, y=price, color=beds,group=beds)) + 
+  geom_point(size=0.01,alpha=0.2) +
+  geom_smooth(method = "loess", se = FALSE) +
+    scale_color_discrete(name="Bedrooms") +
+    theme_bw() +
+    labs(title=paste0(area," Listings (unfurnished) ",format(nrow(plot_data))),x="Date",y="Asking Rent")
+  
+```
+
+
+
+```{r}
+plot_data <- ls %>% filter(as.integer(beds)<3, downtown==TRUE, price<5000) %>% mutate(ppsf=price/size) %>% filter(!is.na(ppsf) & ppsf<7.5)
+  ggplot(plot_data, aes(x=post_date, y=ppsf, color=beds,group=beds)) + 
+  geom_point(size=0.01,alpha=0.2) +
+  geom_smooth(method = "loess", se = FALSE) +
+    theme_bw()
+
+```
+
+
+```{r}
+plot_data <- ls %>% filter(as.integer(beds)<=2) %>% mutate(beds=ifelse(as.integer(beds)>=5,"5+",beds),
+                           type=paste0(beds, ifelse(downtown," downtown","")))
+# totals <- plot_data %>%
+#   group_by(downtown,beds) %>% summarize(price,sub)
+  ggplot(plot_data, aes(x=post_date, y=price, color=type,group=type)) + 
+  geom_point(size=0.01,alpha=0.2) +
+    scale_color_brewer(palette = "Paired") +
+  geom_smooth(method = "loess", se = FALSE) +
+    theme_bw()
+```
+
+
 
 ## Map
 
@@ -57,13 +143,13 @@ theme_opts<-list(theme(panel.grid.minor = element_blank(),
 
 
 
-```{r price_map, fig.height=10, fig.width=10, message=FALSE, warning=FALSE}
+```{r price_map, fig.height=5, fig.width=5, message=FALSE, warning=FALSE}
 library(sf)
 library(ggplot2)
 
 geo=get_census(dataset = 'CA16',regions=list(CMA="59933"),geo_format='sf',level="Regions")
 
-ls <- get_listings("2017-08-01","2017-09-01",geo$geometry,beds=c(1),filter = 'unfurnished')
+ls <- get_listings(start_time,end_time,geo$geometry,beds=c(1),filter = 'unfurnished')
   summary=ls %>% as.data.frame %>% select("price","beds") %>% group_by(beds) %>% summarize(median=paste0("$",format(median(price),big.mark=","))) %>% mutate(name=row$name)
 
 cts=get_census(dataset = 'CA16',regions=list(CMA="59933"),geo_format='sf',level="CSD")
@@ -98,7 +184,7 @@ ggplot() +
 
 ## Rent distributions by municipality
 
-```{r, message=FALSE, warning=FALSE}
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
 library(ggbeeswarm)
 library(gridExtra)
 
@@ -106,7 +192,7 @@ regions=as_census_region_list(search_census_regions("Vancouver",'CA16','CMA'))
 
 geo=get_census(dataset = 'CA16',regions=regions,geo_format='sf',level="Regions")
 
-ls <- get_listings("2017-08-01","2017-09-01",geo$geometry,beds=c(1),filter = 'unfurnished',sanity=c(400,4000))
+ls <- get_listings(start_time,end_time,geo$geometry,beds=c(1),filter = 'unfurnished',sanity=c(400,4000))
   summary=ls %>% as.data.frame %>% select("price","beds") %>% group_by(beds) %>% summarize(median=paste0("$",format(median(price),big.mark=","))) %>% mutate(name=row$name)
 
   
@@ -118,7 +204,7 @@ top_munis <- geos %>% group_by(name) %>% summarize(count=length(name)) %>%
 
 plot_data <- geos %>% filter(name %in% top_munis) %>%
   rename(Municipality=name)
-title="Distribution of Unfurnished 1br Rents, August 2017"
+title="Distribution of Unfurnished 1br Rents, September 2017"
 p1 <- ggplot(plot_data) + 
   geom_density(aes(x=price, color=Municipality)) +
   labs(title=title)
@@ -138,7 +224,7 @@ regions=as_census_region_list(search_census_regions(region_name,'CA16','CSD') %>
 
 geo=get_census(dataset = 'CA16',regions=regions,geo_format='sf',level="Regions")
 
-ls <- get_listings("2017-08-01","2017-09-01",geo$geometry,beds=c(1),filter = 'unfurnished',sanity=c(400,4000))
+ls <- get_listings(start_time,end_time,geo$geometry,beds=c(1),filter = 'unfurnished',sanity=c(400,4000))
 summary=ls %>% as.data.frame %>% 
   select("price","beds") %>% 
   group_by(beds) %>%
@@ -180,7 +266,7 @@ regions=as_census_region_list(search_census_regions(region_name,'CA16','CSD') %>
 
 geo=get_census(dataset = 'CA16',regions=regions,geo_format='sf',level="Regions")
 
-ls <- get_listings("2017-05-01","2017-09-01",geo$geometry,beds=c(1),filter = 'unfurnished',sanity=c(400,4000))
+ls <- get_listings(start_time,end_time,geo$geometry,beds=c(1),filter = 'unfurnished',sanity=c(400,4000))
 
 ls$year_month <- factor(substr(ls$post_date,0,7),ordered = TRUE)
 #ls$year_month_day <- factor(substr(ls$post_date,0,10),ordered = TRUE)
@@ -217,7 +303,7 @@ geo=get_census(dataset = 'CA16',regions=regions,geo_format='sf',level="Regions")
 geometry=st_union(geo$geometry)
 
 beds=2
-ls <- get_listings("2017-08-01","2017-09-01",geometry,beds=c(beds),filter = 'unfurnished',sanity=c(400,5000))
+ls <- get_listings(start_time,end_time,geometry,beds=c(beds),filter = 'unfurnished',sanity=c(400,5000))
   summary=ls %>% as.data.frame %>% select("price","beds") %>% group_by(beds) %>% summarize(median=paste0("$",format(median(price),big.mark=","))) %>% mutate(name=row$name)
 
   
@@ -243,13 +329,16 @@ grid.arrange(p1, p2, ncol=1)
 
 
 ```{r}
-geo=sf::read_sf("../data/custom_region.geojson")
+#geo=sf::read_sf("../data/custom_region.geojson")
+geo=sf::read_sf("../data/victoria_stainsbury.geojson")
 
-ls <- get_listings("2017-06-01","2017-09-01",geo$geometry,beds=c(1),filter = 'unfurnished')
+
+
+ls <- get_listings("2017-06-01","2017-09-01",geo$geometry,filter = 'unfurnished')
   summary=ls %>% as.data.frame %>% select("price","beds") %>% group_by(beds) %>% summarize(median=paste0("$",format(median(price),big.mark=","))) %>% mutate(name=row$name)
 
-  ggplot(ls, aes(1, price))+ 
-  geom_violin(aes(fill=1 )) + 
+  ggplot(ls, aes(beds, price))+ 
+  geom_violin(aes(fill=beds )) + 
   #geom_beeswarm(pch = 1, col='white', cex=0.8, alpha=0.6) +
   labs(title="June-August 1br unfurnished Custom Region")
   
@@ -281,7 +370,46 @@ base <- get_map(location=c(-122.84594535827637, 49.18422801616818), zoom=15, sou
 
 
 
+```{r}
+my_theme <- list(
+  theme_minimal(),
+  theme(axis.text = element_blank(), 
+        axis.title = element_blank(), 
+        axis.ticks = element_blank(),
+        panel.grid.major = element_line(colour = "white"), 
+        panel.grid.minor = element_line(colour = "white"),
+        panel.background = element_blank(), 
+        axis.line = element_blank())
+)
+```
 
 
+## Vancouver rent map
+```{r, echo=FALSE, message=TRUE, warning=TRUE}
+library(tidyverse)
+library(cancensus)
+library(rental)
+library(sf)
+regions=list_census_regions('CA16', use_cache = TRUE) %>% filter(level=="CMA",name == "Vancouver")
+geo=get_census(dataset = 'CA16',regions=as_census_region_list(regions),geo_format='sf',level="CT")
+
+start_time="2017-09-01"
+end_time="2017-12-07"
+
+ppsf_formatter <- function(x){return(paste0("$",round(x,2),"/sf"))}
+
+ls <- get_listings(start_time,end_time,st_union(geo$geometry),beds=c('0','1','2'),filter = 'unfurnished') %>%
+  mutate(ppsf=price/size)
+  
+geo_listings <- st_join(geo, filter(ls,!is.na(ppsf))) %>% 
+  group_by(GeoUID) %>% 
+  summarize(ppsf=median(ppsf),count=n())
+
+ggplot(geo_listings %>%  mutate(ppsf=ifelse(count>=5,ppsf,NA)) %>% st_as_sf) +
+  geom_sf(aes(fill=ppsf),size=NA) +
+  scale_fill_viridis_c(name="Asking Rent/sf", option="magma") +
+  labs(title="October 1 through Dec 7 Asking Rent/sf") +
+  my_theme
 
 
+```
