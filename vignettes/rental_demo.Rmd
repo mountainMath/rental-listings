@@ -28,12 +28,12 @@ regions=list_census_regions('CA16', use_cache = TRUE) %>% filter(level=="CSD",na
 geo=get_census(dataset = 'CA16',regions=as_census_region_list(regions),geo_format='sf',level="Regions")
 
 start_time="2017-11-01"
-end_time="2018-01-16"
+end_time="2018-01-31"
 
 for (i in 1:nrow(geo)) {
   row=geo[i,]
-  ls <- get_listings(start_time,end_time,row$geometry,filter = 'unfurnished')
-  summary=ls %>% as.data.frame %>% select("price","beds","size") %>% group_by(beds) %>% summarize(median=paste0("$",format(median(price),big.mark=",")),median_ppsf=paste0("$",round(median(price/size, na.rm=TRUE),2),"/sf"), count=n()) %>% mutate(name=row$name)
+  ls <- get_listings(start_time,end_time,row$geometry)
+  summary=ls %>% as.data.frame %>% select("price","beds","size","furnished") %>% group_by(beds,furnished) %>% summarize(median=paste0("$",format(median(price),big.mark=",")),median_ppsf=paste0("$",round(median(price/size, na.rm=TRUE),2),"/sf"), count=n()) %>% mutate(name=row$name)
   print(row$name)
   print(summary)
   #print(paste0(row$name," median price: $",format(median(ls$price),big.mark=",")))
@@ -50,37 +50,32 @@ regions=list_census_regions('CA16', use_cache = TRUE) %>% filter(level=="CSD",na
 geo=get_census(dataset = 'CA16',regions=as_census_region_list(regions),geo_format='sf',level="Regions")
 
 start_time="2017-05-01"
-end_time="2017-12-16"
+end_time="2018-03-04"
 
 
-  ls <- get_listings(start_time,end_time,geo$geometry,filter = 'unfurnished')
-  summary=ls %>% as.data.frame %>% select("price","beds") %>% group_by(beds) %>% summarize(median=paste0("$",format(median(price),big.mark=",")), count=n()) %>% mutate(name="Vancouver")
+ls <- get_listings(start_time,end_time,geo$geometry,filter = 'unfurnished')
+summary=ls %>% as.data.frame %>% select("price","beds") %>% group_by(beds) %>% summarize(median=paste0("$",format(median(price),big.mark=",")), count=n()) %>% mutate(name="Vancouver")
   
 ```
 
 ```{r}
-ls<-st_as_sf(ls)
-base=getOption("custom_data_path")
-nbhds=st_read(paste0(base,"local_area_boundary_shp/local_area_boundary.shp")) %>% st_transform(4326)
-downtown=st_read(paste0(base,"downtown_yvr.geojson"))
-yaletown=st_read(paste0(base,"yaletown.geojson"))
-westend=st_read(paste0(base,"westend.geojson"))
-ls$downtown=as.logical(st_intersects(ls,downtown))
-ls$westend=as.logical(st_intersects(ls,westend))
-ls$yaletown=as.logical(st_intersects(ls,yaletown))
-ls$nbhd_dtn=as.logical(st_intersects(ls,nbhds %>% filter(NAME=="Downtown")))
-ls <- ls %>% mutate(
-  nbhd_dtn=ifelse(is.na(nhd_dtn),FALSE,nhd_dtn),
-  downtown=ifelse(is.na(downtown),FALSE,downtown),
-  westend=ifelse(is.na(westend),FALSE,westend),
-  yaletown=ifelse(is.na(yaletown),FALSE,yaletown)
-  )
+ls<-st_as_sf(ls) %>%
+  st_join(
+    st_read(file.path(getOption("custom_data_path"),"local_area_boundary_shp/local_area_boundary.shp")) %>% 
+      st_transform(4326))
 
 
-ls <- st_join(ls,nbhds)
+ggplot(ls %>% 
+         filter(as.integer(beds)<3, as.integer(beds)>0, price<6000, price>500),
+       aes(x=post_date, y=price, color=beds,group=beds)) +
+  #geom_point(size=0.01,alpha=0.2) +
+  geom_smooth(method = "loess", se = FALSE) +
+    scale_color_discrete(name="Bedrooms") +
+    theme_bw() +
+  facet_wrap("NAME", scales = "free_y") +
+    labs(title=paste0("Listings (unfurnished) ",format(nrow(plot_data))),x="Date",y="Asking Rent")
 
-
-ggplot(nbhds, aes(fill=NAME)) +geom_sf()
+#ggplot(nbhds, aes(fill=NAME)) +geom_sf()
 
 
 ```
@@ -100,7 +95,7 @@ plot_data <- ls %>% filter(NAME==area,as.integer(beds)<3, price<5000) %>% mutate
 
 
 ```{r}
-plot_data <- ls %>% filter(as.integer(beds)<3, downtown==TRUE, price<5000) %>% mutate(ppsf=price/size) %>% filter(!is.na(ppsf) & ppsf<7.5)
+plot_data <- ls %>% filter(as.integer(beds)<3,  price<6000, price>500) %>% mutate(ppsf=price/size) %>% filter(!is.na(ppsf) & ppsf<7.5)
   ggplot(plot_data, aes(x=post_date, y=ppsf, color=beds,group=beds)) + 
   geom_point(size=0.01,alpha=0.2) +
   geom_smooth(method = "loess", se = FALSE) +

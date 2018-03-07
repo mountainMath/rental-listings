@@ -66,13 +66,14 @@ get_listings <- function(start_date,end_date,region,beds=NA,size=NA,sanity=c(400
     conditions
   )
   query_string=paste(conditions,collapse = " and ")
-  selects=c("\"postDate\" as post_date","location", "price", "beds", "size")
+  selects=c("\"postDate\" as post_date","location", "price", "beds", "size", "attributes")
   if (include_title) {
     selects=c(selects,"title")
   }
   ls <- sf::st_read_db(conn, query = paste0("select ",paste(selects,collapse = ", ")," from vancraig where ",
                                         query_string,";"), geom_column = "location") %>%
-    mutate(size=as.numeric(size))
+    mutate(size=as.numeric(size),
+           furnished=grepl("furnished",attributes))
   RPostgreSQL::dbDisconnect(conn)
 
   return(ls)
