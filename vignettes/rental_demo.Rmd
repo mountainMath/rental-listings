@@ -27,8 +27,8 @@ region_names=c("Vancouver","Calgary","Toronto")
 regions=list_census_regions('CA16', use_cache = TRUE) %>% filter(level=="CSD",name %in% region_names)
 geo=get_census(dataset = 'CA16',regions=as_census_region_list(regions),geo_format='sf',level="Regions")
 
-start_time="2017-11-01"
-end_time="2018-01-31"
+start_time="2018-02-01"
+end_time="2018-03-31"
 
 for (i in 1:nrow(geo)) {
   row=geo[i,]
@@ -57,12 +57,17 @@ ls <- get_listings(start_time,end_time,geo$geometry,filter = 'unfurnished')
 summary=ls %>% as.data.frame %>% select("price","beds") %>% group_by(beds) %>% summarize(median=paste0("$",format(median(price),big.mark=",")), count=n()) %>% mutate(name="Vancouver")
   
 ```
-
+ Fold in nbhd data
 ```{r}
 ls<-st_as_sf(ls) %>%
   st_join(
     st_read(file.path(getOption("custom_data_path"),"local_area_boundary_shp/local_area_boundary.shp")) %>% 
       st_transform(4326))
+```
+ 
+
+
+```{r}
 
 
 ggplot(ls %>% 
@@ -73,7 +78,7 @@ ggplot(ls %>%
     scale_color_discrete(name="Bedrooms") +
     theme_bw() +
   facet_wrap("NAME", scales = "free_y") +
-    labs(title=paste0("Listings (unfurnished) ",format(nrow(plot_data))),x="Date",y="Asking Rent")
+    labs(title=paste0("Listings (unfurnished) ",format(nrow(ls))),x="Date",y="Asking Rent")
 
 #ggplot(nbhds, aes(fill=NAME)) +geom_sf()
 

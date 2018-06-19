@@ -70,7 +70,7 @@ get_listings <- function(start_date,end_date,region,beds=NA,size=NA,sanity=c(400
   if (include_title) {
     selects=c(selects,"title")
   }
-  ls <- sf::st_read_db(conn, query = paste0("select ",paste(selects,collapse = ", ")," from vancraig where ",
+  ls <- sf::st_read(conn, query = paste0("select ",paste(selects,collapse = ", ")," from vancraig where ",
                                         query_string,";"), geom_column = "location") %>%
     mutate(size=as.numeric(size),
            furnished=grepl("furnished",attributes))
