@@ -5,7 +5,8 @@
 \title{Access to a hypothetical rental listings database}
 \usage{
 get_listings(start_date, end_date, region, beds = NA, size = NA,
-  sanity = c(400, 10000), filter = "all", quiet = TRUE)
+  sanity = c(400, 10000), filter = "all", include_title = FALSE,
+  quiet = TRUE)
 }
 \arguments{
 \item{start_date}{starting date for listings (inclusive)}

@@ -19,6 +19,9 @@ library(sf)
 ```
 
 
+
+
+
 ## Listings Overview
 As an example we read the August data for unfurnished listings for Vancouver, Calgary and Toronto.
 ```{r, echo=FALSE}
@@ -27,13 +30,16 @@ region_names=c("Vancouver","Calgary","Toronto")
 regions=list_census_regions('CA16', use_cache = TRUE) %>% filter(level=="CSD",name %in% region_names)
 geo=get_census(dataset = 'CA16',regions=as_census_region_list(regions),geo_format='sf',level="Regions")
 
-start_time="2018-02-01"
-end_time="2018-03-31"
+start_time="2019-01-01"
+end_time="2019-02-01"
 
 for (i in 1:nrow(geo)) {
   row=geo[i,]
   ls <- get_listings(start_time,end_time,row$geometry)
-  summary=ls %>% as.data.frame %>% select("price","beds","size","furnished") %>% group_by(beds,furnished) %>% summarize(median=paste0("$",format(median(price),big.mark=",")),median_ppsf=paste0("$",round(median(price/size, na.rm=TRUE),2),"/sf"), count=n()) %>% mutate(name=row$name)
+  summary=ls %>% as.data.frame %>% select("price","beds","size","furnished") %>% 
+    filter(!is.na(size),size>0) %>%
+    group_by(beds,furnished) %>% 
+    summarize(median=paste0("$",format(median(price),big.mark=",")),median_ppsf=paste0("$",round(median(price/size, na.rm=TRUE),2),"/sf"), count=n()) %>% mutate(name=row$name)
   print(row$name)
   print(summary)
   #print(paste0(row$name," median price: $",format(median(ls$price),big.mark=",")))
@@ -43,26 +49,105 @@ for (i in 1:nrow(geo)) {
 
 ```
 
+```{r}
+g <- geo %>% filter(name=="Vancouver (CY)")
+
+get_rental_summary <- function(g,start_time,end_time) {
+   ls <- get_listings(start_time,end_time,g$geometry)
+  summary=ls %>% as.data.frame %>% select("price","beds","size","furnished") %>% 
+    filter(!is.na(size),size>0) %>%
+    group_by(beds,furnished) %>% 
+    summarize(median=median(price),median_ppsf=median(price/size, na.rm=TRUE), count=n())
+}
+
+start_time="2018-01-01"
+end_time="2019-04-20"
+
+plot_data <- get_rental_summary(g,"2019-03-20","2019-04-20") %>%
+  mutate(Year="Jan 2019") %>%
+  bind_rows(
+    get_rental_summary(g,"2018-03-20","2018-04-20") %>%
+  mutate(Year="Jan 2018")
+  ) %>%
+  filter(beds %in% c(1,2,3)) %>%
+  group_by(furnished,beds) %>%
+  select(median_ppsf,Year) %>%
+  spread(key=Year,value=median_ppsf) %>%
+  mutate(change=scales::percent(`Jan 2019`/`Jan 2018`-1)) %>%
+  mutate_at(c("Jan 2019","Jan 2018"),function(x)paste0("$",round(x,2),"/sf"))
+
+
+
+ plot_data %>% knitr::kable()
+
+```
+
+
 
 ## Vancouver over time
 ```{r}
-regions=list_census_regions('CA16', use_cache = TRUE) %>% filter(level=="CSD",name == "Vancouver")
+region_name="Vancouver"
+regions=list_census_regions('CA16', use_cache = TRUE) %>% filter(level=="CSD",name == region_name)
 geo=get_census(dataset = 'CA16',regions=as_census_region_list(regions),geo_format='sf',level="Regions")
 
 start_time="2017-05-01"
-end_time="2018-03-04"
+end_time="2019-04-20"
 
 
-ls <- get_listings(start_time,end_time,geo$geometry,filter = 'unfurnished')
-summary=ls %>% as.data.frame %>% select("price","beds") %>% group_by(beds) %>% summarize(median=paste0("$",format(median(price),big.mark=",")), count=n()) %>% mutate(name="Vancouver")
+ls <- get_listings(start_time,end_time,geo$geometry,filter = 'unfurnished',include_title = FALSE)
+summary=ls %>% as.data.frame %>% select("price","beds") %>% group_by(beds) %>% summarize(median=paste0("$",format(median(price),big.mark=",")), count=n()) %>% mutate(name=region_name)
   
 ```
+
+
+```{r}
+plot_data <- ls %>% mutate(year_month=strftime(post_date,"%Y-%m")) %>%
+  mutate(beds=case_when(as.integer(beds)<=3 ~ beds,TRUE ~ "4+")) %>%
+  filter(beds!="4+") %>%
+  mutate(ppsf=price/size) %>%
+  filter(!is.na(ppsf))
+ggplot(plot_data,
+       aes(x=year_month, y=ppsf)) +
+  #geom_point(size=0.01,alpha=0.2) +
+  geom_boxplot(outlier.shape = NA) +
+    #scale_color_discrete(name="Bedrooms") +
+  theme_bw() +
+  scale_y_continuous(labels=function(d)paste0("$",round(d,1),"/sf"),limits = c(0,6)) +
+  facet_wrap("beds") +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1)) +
+  labs(title=paste0("City of Vancouver unfurnished listings by number of bedrooms"),x="Date",y="Asking Rent per sf")
+
+#ggplot(nbhds, aes(fill=NAME)) +geom_sf()
+
+
+```
+
+```{r}
+plot_data %>% 
+  st_set_geometry(NULL) %>%
+  group_by(year_month,beds) %>%
+  summarize_at(c("price","ppsf"),median,na.rm=TRUE) %>%
+  filter(year_month %in% c("2018-03","2019-03")) %>%
+  mutate(year=substr(year_month,1,4) %>% as.integer,
+         month=substr(year_month,6,7)) %>%
+  left_join((.) %>% mutate(year=year+1) %>% select(year,month,beds,price,ppsf),by=c("year","month","beds")) %>%
+  mutate(change=price.x/price.y-1,
+         changesf=ppsf.x/ppsf.y-1)
+```
+
+
  Fold in nbhd data
 ```{r}
 ls<-st_as_sf(ls) %>%
   st_join(
     st_read(file.path(getOption("custom_data_path"),"local_area_boundary_shp/local_area_boundary.shp")) %>% 
       st_transform(4326))
+```
+ 
+```{r}
+ls %>% filter(NAME %in% c("Downtown","West End")) %>%
+  group_by(furnished,beds) %>%
+  summarize(price=median(price))
 ```
  
 
@@ -77,8 +162,29 @@ ggplot(ls %>%
   geom_smooth(method = "loess", se = FALSE) +
     scale_color_discrete(name="Bedrooms") +
     theme_bw() +
-  facet_wrap("NAME", scales = "free_y") +
+  facet_wrap("NAME") +
     labs(title=paste0("Listings (unfurnished) ",format(nrow(ls))),x="Date",y="Asking Rent")
+
+#ggplot(nbhds, aes(fill=NAME)) +geom_sf()
+
+
+```
+
+
+
+```{r}
+ggplot(ls %>% 
+         group_by(NAME) %>%
+         filter(n()>5000) %>%
+         ungroup %>%
+         mutate(ppsf=price/size),
+       aes(x=post_date, y=ppsf)) +
+  #geom_point(size=0.01,alpha=0.2) +
+  geom_smooth(method = "loess", se = FALSE) +
+    #scale_color_discrete(name="Bedrooms") +
+    theme_bw() +
+  facet_wrap("NAME") +
+    labs(title=paste0("Listings (unfurnished) ",format(nrow(ls))),x="Date",y="Asking Rent per sf")
 
 #ggplot(nbhds, aes(fill=NAME)) +geom_sf()
 
